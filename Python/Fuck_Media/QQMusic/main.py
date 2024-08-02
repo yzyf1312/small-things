@@ -1,3 +1,5 @@
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC
+from mutagen.mp3 import MP3
 import subprocess
 import requests
 import random
@@ -6,11 +8,107 @@ import time
 import re
 import os
 
+def update_song_tags(song_file_path,album_pic,song_name,singer_name,album_name):
+
+    # 打开音频文件
+    song = MP3(song_file_path, ID3=ID3)
+
+    # 处理元数据
+    song.tags.add(TIT2(encoding=3, text=song_name))  # 歌曲标题
+    song.tags.add(TPE1(encoding=3, text=singer_name))  # 艺术家
+    song.tags.add(TALB(encoding=3, text=album_name))  # 专辑
+
+    # 打开封面图片文件
+    with open(album_pic, 'rb') as image_file:
+        # 创建 APIC 对象
+        # encoding=3 表示使用 UTF-8 编码
+        # mime='image/jpeg' 表示图片格式为 JPEG
+        # type=3 表示这是封面图片
+        picture = APIC(
+            encoding=3,
+            mime=u'image/jpeg',
+            type=3,
+            data=image_file.read()
+        )
+
+        # 添加封面图片到 ID3 标签
+        song.tags.add(picture)
+
+    # 保存更改
+    song.save()
+
+    print(f"Update tags completed for song:{song_name}")
+
 def cleartext(original_string):
     special_chars_with_spaces = r'\s*[\\\/\:\*\?"<>|\-]\s*'
 
     replaced_string = re.sub(special_chars_with_spaces, '_', original_string)
     return replaced_string
+
+def path_check(path):
+    # 检查路径是否指向有扩展名的文件
+
+    # 获取路径末端的对象
+    base_name = os.path.basename(path)
+    
+    # 找到最后一个英文句号的位置
+    last_period_index = base_name.rfind('.')
+    
+    # 检查句号之后是否还有字符
+    if last_period_index != -1 and last_period_index < len(base_name) - 1:
+        return True
+    else:
+        return False
+
+def aria2_download(url,file_path,file_name):
+    if path_check(file_path):
+        command = [
+            './aria2c.exe',
+            '-o', file_name,  # 输出文件名
+            '-d', os.path.dirname(file_path),  # 输出目录
+            '-s', '16',  # 同时尝试的源数
+            url
+        ]
+    else:
+        command = [
+            './aria2c.exe',
+            '-o', file_name,  # 输出文件名
+            '-d', file_path,  # 输出目录
+            '-s', '16',  # 同时尝试的源数
+            url
+        ]
+
+    # 运行aria2命令
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = process.communicate()
+
+    if process.returncode == 0:
+        print(f"Download completed for {file_name}")
+    else:
+        print(f"Error downloading {file_name}: {stderr.decode()}")
+
+def lyric_downlaod(song_songmid,lyric_file):
+    base_url = "https://i.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
+
+    # 配置载荷
+    get_payload = "?songmid=" + song_songmid + "&g_tk=5381&format=json&inCharset=utf8&outCharset=utf-8&nobase64=1"
+    target_url = base_url + get_payload
+
+    # 构造请求头
+    ## Rederer 非常重要!
+    header_data = {
+        'Referer': 'https://y.qq.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+    }
+
+    fcg = requests.get(target_url,headers=header_data)
+
+    fcg_data = json.loads(fcg.text)
+
+    with open(lyric_file, 'w', encoding='utf-8') as lyric:
+        lyric.write(fcg_data["lyric"])
+
+    print("歌词写入完成")
 
 # 定义常量
 ## 循环间时间间隔的范围(防止可能存在的风控)
@@ -44,9 +142,10 @@ for cdlist_item in fcg_data["cdlist"]:
     dissname_data = cleartext(cdlist_item["dissname"])
     
     for song_data in songlist_data:
-        # 安全地获取每个歌曲的"songname"和"songmid"，如果不存在则使用默认值
+        # 安全地获取每个歌曲的信息，如果不存在则使用默认值
         song_songname = song_data.get("songname", "Default Song Name")
         song_albumname = song_data.get("albumname", "Default Song Albumname")
+        song_albummid = song_data["albummid"]
         song_songmid = song_data.get("songmid", "Default Song MID")
 
         # 获取歌手
@@ -75,10 +174,21 @@ for cdlist_item in fcg_data["cdlist"]:
 
         print(f"{song_songname}:{song_songmid}")
 
+        song_size_320 = song_data["size320"]
+        song_size_128 = song_data["size128"]
+
+        if song_size_320 != 0:
+            filename_prefix = "M800"
+        elif song_size_128 != 0:
+            filename_prefix = "M500"
+        else:
+            print(song_songname + ":找不到可用的音质")
+            continue
+
         # 获取 musicu.fcg
 
         # 构造请求使用到的文件名
-        filename = "M500" + song_songmid + song_songmid + ".mp3"
+        filename = filename_prefix + song_songmid + song_songmid + ".mp3"
 
         # 构建请求的载荷
         payload = {
@@ -134,26 +244,23 @@ for cdlist_item in fcg_data["cdlist"]:
         if purl_data == "":
             print("链接获取失败")
         else:
-            url_data = "http://ws.stream.qqmusic.qq.com/" + purl_data
+            song_url_data = "http://ws.stream.qqmusic.qq.com/" + purl_data
+            album_pic_filename = cleartext(song_songname) + " - " + singer_name_string + ".jpg"
+            lyric_filename = cleartext(song_songname) + " - " + singer_name_string + ".lrc"
+            album_pic_url_data = "https://y.gtimg.cn/music/photo_new/T002R800x800M000" + song_albummid + ".jpg"
+            album_pic_file = os.path.join(current_directory, dissname_data, album_pic_filename)
+            lyric_file = os.path.join(current_directory, dissname_data, lyric_filename)
 
             # 确保目录存在
             os.makedirs(os.path.dirname(local_file), exist_ok=True)
 
-            # 使用aria2进行下载
-            command = [
-                './aria2c.exe',
-                '-o', local_filename,  # 输出文件名
-                '-d', os.path.dirname(local_file),  # 输出目录
-                '-s', '16',  # 同时尝试的源数
-                url_data
-            ]
+            # 使用 aria2 下载歌曲
+            aria2_download(song_url_data,local_file,local_filename)
+            # 使用 aria2 下载歌曲封面
+            aria2_download(album_pic_url_data,album_pic_file,album_pic_filename)
 
-            # 运行aria2命令
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = process.communicate()
+            # 写入元数据
+            update_song_tags(local_file,album_pic_file,song_songname,singer_name_data,song_albumname)
 
-            if process.returncode == 0:
-                print(f"Download completed for {local_filename}")
-            else:
-                print(f"Error downloading {local_filename}: {stderr.decode()}")
-
+            # 下载歌词
+            lyric_downlaod(song_songmid,lyric_file)
