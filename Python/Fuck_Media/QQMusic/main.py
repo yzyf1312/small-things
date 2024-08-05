@@ -8,6 +8,60 @@ import time
 import re
 import os
 
+def post_musicu_fcg(filename,songmid,cookie_string):
+    # 构建请求的载荷
+    payload = {
+    "req_1": {
+        "module": "vkey.GetVkeyServer",
+        "method": "CgiGetVkey",
+        "param": {
+            "filename": [
+                filename
+            ],
+            "guid": "10000",
+            "songmid": [
+                songmid
+            ],
+            "songtype": [
+                0
+            ],
+            "uin": "0",
+            "loginflag": 1,
+            "platform": "20"
+        }
+    },
+    "loginUin": "0",
+    "comm": {
+        "uin": "0",
+        "format": "json",
+        "ct": 24,
+        "cv": 0
+    }
+    }
+
+    header_data = {
+    'Content-Type': 'application/json',
+    'Cookie': cookie_string,
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'  # 根据需要设置User-Agent
+    }
+    
+    retry_times = 0
+    while retry_times < 8:
+        try:
+            response = requests.post(
+                'https://u.y.qq.com/cgi-bin/musicu.fcg',
+                data=json.dumps(payload),  # 将payload字典转换为JSON字符串
+                headers=header_data,
+                timeout=2
+            )
+            return response.text
+        except requests.exceptions.RequestException:
+            retry_times += 1
+            if retry_times >= 8:
+                print(f"请求超时{retry_times}次，跳过此歌曲")
+            else:
+                print(f"请求超时，进行第{retry_times}次重试")
+
 def update_song_tags(song_file_path,album_pic,song_name,singer_name,album_name):
 
     # 打开音频文件
@@ -17,6 +71,10 @@ def update_song_tags(song_file_path,album_pic,song_name,singer_name,album_name):
     song.tags.add(TIT2(encoding=3, text=song_name))  # 歌曲标题
     song.tags.add(TPE1(encoding=3, text=singer_name))  # 艺术家
     song.tags.add(TALB(encoding=3, text=album_name))  # 专辑
+
+    if not os.path.exists(album_pic):
+        print("使用默认歌曲封面")
+        album_pic = "QQMusic_redesign.jpg"
 
     # 打开封面图片文件
     with open(album_pic, 'rb') as image_file:
@@ -71,21 +129,37 @@ def aria2_download(url,file_path,file_name):
         ]
     else:
         command = [
-            './aria2c.exe',
+            'aria2c.exe',
             '-o', file_name,  # 输出文件名
             '-d', file_path,  # 输出目录
             '-s', '16',  # 同时尝试的源数
             url
         ]
 
-    # 运行aria2命令
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = process.communicate()
+    retry_times = 0
+    while retry_times < 8:
 
-    if process.returncode == 0:
-        print(f"Download completed for {file_name}")
-    else:
-        print(f"Error downloading {file_name}: {stderr.decode()}")
+        # 运行aria2命令
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            stdout, stderr = process.communicate(timeout=16)
+
+            if process.returncode == 0:
+                print(f"Download completed for {file_name}")
+                return "succeed"
+            else:
+                retry_times += 1
+                print(f"Error downloading {file_name}: {stderr.decode()}")
+            if retry_times >= 8:
+                print(f"Error downloading {retry_times} times, skip {file_name}")
+                return "skip"
+        except subprocess.TimeoutExpired:
+            process.kill()  # 终止进程
+            retry_times += 1
+            if retry_times >= 8:
+                return "skip"
+            else:
+                print(f"Aria2下载超时，进行第{retry_times}次重试")
 
 def lyric_downlaod(song_songmid,lyric_file):
     base_url = "https://i.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
@@ -101,14 +175,26 @@ def lyric_downlaod(song_songmid,lyric_file):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
     }
 
-    fcg = requests.get(target_url,headers=header_data)
+    retry_times = 0
+    while retry_times < 8:
+        try:
+            fcg = requests.get(target_url,headers=header_data,timeout=2)
 
-    fcg_data = json.loads(fcg.text)
+            fcg_data = json.loads(fcg.text)
 
-    with open(lyric_file, 'w', encoding='utf-8') as lyric:
-        lyric.write(fcg_data["lyric"])
+            with open(lyric_file, 'w', encoding='utf-8') as lyric:
+                lyric.write(fcg_data["lyric"])
 
-    print("歌词写入完成")
+            print("歌词写入完成")
+            return "succeed"
+        except requests.exceptions.RequestException:
+            retry_times += 1
+            if retry_times >= 8:
+                print(f"请求超时{retry_times}次，跳过此歌词")
+                return "skip"
+            else:
+                print(f"请求超时，进行第{retry_times}次重试")
+
 
 # 定义常量
 ## 循环间时间间隔的范围(防止可能存在的风控)
@@ -137,6 +223,8 @@ header_data = {
 fcg = requests.get(target_url,headers=header_data)
 fcg_data = json.loads(fcg.text)
 
+skip_times = 0
+
 for cdlist_item in fcg_data["cdlist"]:
     songlist_data = cdlist_item.get("songlist", [])
     dissname_data = cleartext(cdlist_item["dissname"])
@@ -152,13 +240,14 @@ for cdlist_item in fcg_data["cdlist"]:
         ## 下面一行用于初始化，变量 is_first_singer 用于判断是否为第一个歌手
         is_first_singer = True
         for singer_data in song_data["singer"]:
+            singer_name_temp = cleartext(singer_data["name"])
             if is_first_singer:
                 is_first_singer = False
-                singer_name_string = singer_data["name"]
-                singer_name_data = singer_data["name"]
+                singer_name_string = singer_name_temp
+                singer_name_data = singer_name_temp
             else:
-                singer_name_string = singer_name_string + "、" + singer_data["name"]
-                singer_name_data = singer_name_data + "/" + singer_data["name"]
+                singer_name_string = singer_name_string + "、" + singer_name_temp
+                singer_name_data = singer_name_data + "/" + singer_name_temp
         
         local_filename = cleartext(song_songname) + " - " + singer_name_string + ".mp3"
 
@@ -190,51 +279,16 @@ for cdlist_item in fcg_data["cdlist"]:
         # 构造请求使用到的文件名
         filename = filename_prefix + song_songmid + song_songmid + ".mp3"
 
-        # 构建请求的载荷
-        payload = {
-"req_1": {
-    "module": "vkey.GetVkeyServer",
-    "method": "CgiGetVkey",
-    "param": {
-        "filename": [
-            filename
-        ],
-        "guid": "10000",
-        "songmid": [
-            song_songmid
-        ],
-        "songtype": [
-            0
-        ],
-        "uin": "0",
-        "loginflag": 1,
-        "platform": "20"
-    }
-},
-"loginUin": "0",
-"comm": {
-    "uin": "0",
-    "format": "json",
-    "ct": 24,
-    "cv": 0
-}
-}
-
-        header_data = {
-            'Content-Type': 'application/json',
-            'Cookie': cookie_string,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'  # 根据需要设置User-Agent
-        }
-
         # 发送POST请求
         # 要将payload转换为JSON格式的字符串，因为requests默认发送application/x-www-form-urlencoded格式
-        response = requests.post(
-            'https://u.y.qq.com/cgi-bin/musicu.fcg',
-            data=json.dumps(payload),  # 将payload字典转换为JSON字符串
-            headers=header_data
-        )
 
-        response_data = json.loads(response.text)
+        response_text = post_musicu_fcg(filename,song_songmid,cookie_string)
+
+        if response_text == None:
+            skip_times += 1
+            continue
+
+        response_data = json.loads(response_text)
         req_1_data = response_data["req_1"]
 
         data_data = req_1_data["data"]
@@ -255,12 +309,22 @@ for cdlist_item in fcg_data["cdlist"]:
             os.makedirs(os.path.dirname(local_file), exist_ok=True)
 
             # 使用 aria2 下载歌曲
-            aria2_download(song_url_data,local_file,local_filename)
+            result = aria2_download(song_url_data,local_file,local_filename)
+            if result == "skip":
+                print(f"Aria2下载多次超时，跳过{local_filename}的下载")
+                skip_times += 1
+                continue
             # 使用 aria2 下载歌曲封面
-            aria2_download(album_pic_url_data,album_pic_file,album_pic_filename)
+            result = aria2_download(album_pic_url_data,album_pic_file,album_pic_filename)
 
             # 写入元数据
             update_song_tags(local_file,album_pic_file,song_songname,singer_name_data,song_albumname)
 
             # 下载歌词
-            lyric_downlaod(song_songmid,lyric_file)
+            result = lyric_downlaod(song_songmid,lyric_file)
+            if result == "skip":
+                skip_times += 1
+                continue
+
+if skip_times != 0:
+    print(f"本次跳过了{skip_times}首歌曲")
