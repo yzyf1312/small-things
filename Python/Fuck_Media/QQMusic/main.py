@@ -391,7 +391,8 @@ def main(disstid_data, cookie_string):
     if skip_times != 0:
         print(f"本次跳过了{skip_times}首歌曲")
 
-cookie_string = input("输入你的 Cookie (留空从浏览器获取):")
-disstid_data = input("输入目标歌单的 disstid:")
+if __name__ == "__main__":
+    cookie_string = input("输入你的 Cookie (留空从浏览器获取):")
+    disstid_data = input("输入目标歌单的 disstid:")
 
-main(disstid_data, cookie_string)
+    main(disstid_data, cookie_string)
