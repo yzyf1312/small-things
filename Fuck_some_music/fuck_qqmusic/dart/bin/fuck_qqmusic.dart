@@ -59,7 +59,7 @@ String cleartext(String originalString) {
   return replacedString;
 }
 
-Future<void> index(String? disstidData, String? cookieString) async {
+void index(String? disstidData, String? cookieString) async {
   if (cookieString == null || disstidData == null) {
     print("Cookie 和 disstid 缺一不可!");
     return;
