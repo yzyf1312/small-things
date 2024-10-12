@@ -24,7 +24,7 @@ A：`Cookie` 是服务器在用户设备上存储的小文本文件，用于记�
 
 ## 关于程序本身
 
-程序分为两个版本：Python 和 Dart。
+程序分为两个版本：Python 和 [Dart](https://github.com/yzyf1312/fuck_online_music)。
 
 ### 两版本关系
 
@@ -32,22 +32,10 @@ Python 版本最先完成，Dart 版本基于 Python 版本重构。Dart 版本�
 
 ### 基于此项目进行开发
 
-#### Python
-
 1. 将此项目保存至本地
 
 2. 在 `requirements.txt` 所在路径下运行指令以获取依赖
 
    ```
    pip install -r .\requirements.txt
-   ```
-
-#### Dart
-
-1. 将此项目保存至本地
-
-2. 在 `pubspec.yaml` 所在路径下运行指令以获取依赖
-
-   ```
-   dart pub get
    ```
